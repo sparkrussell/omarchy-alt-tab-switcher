@@ -114,3 +114,7 @@ pkill -f 'qs -c omarchy-switcher'
 Then delete the `require("hypr.switcher")` line from `~/.config/hypr/hyprland.lua`
 and the `qs -c omarchy-switcher` line from `~/.config/hypr/autostart.lua`, and
 run `hyprctl reload`. Omarchy's stock `ALT+TAB` bindings come back on reload.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Contributions and forks welcome.
