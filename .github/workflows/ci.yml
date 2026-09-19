@@ -1,0 +1,62 @@
+name: CI
+
+# Static-only gates. Everything this project does at runtime needs a live
+# Hyprland compositor plus Quickshell against real Wayland toplevels, none of
+# which a stock GitHub runner has, so CI lints the three sources for syntax and
+# obvious mistakes rather than pretending to exercise behavior.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lua:
+    name: Lua (luacheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luarocks liblua5.4-dev
+          sudo luarocks install luacheck 1.2.0
+      - name: Lint switcher.lua
+        run: luacheck hypr/switcher.lua
+
+  qml:
+    name: QML (qmlformat parse)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt QML tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-declarative-dev-tools
+      # Quickshell's QML modules are not installable on the runner, so a full
+      # qmllint type-check would drown in unresolved-import noise. qmlformat only
+      # parses the grammar (no module resolution) and exits non-zero on a syntax
+      # error, which is exactly the regression we want to catch.
+      - name: Parse-check shell.qml
+        run: /usr/lib/qt6/bin/qmlformat quickshell/omarchy-switcher/shell.qml > /dev/null
+
+  shell:
+    name: Shell (shellcheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Lint install.sh
+        run: shellcheck install.sh
