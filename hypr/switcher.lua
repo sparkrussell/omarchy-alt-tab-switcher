@@ -51,21 +51,12 @@ local function publish()
     return
   end
 
+  -- Addresses only: Hyprland truncates socket2 events at 1024 bytes, so titles
+  -- and classes would cap the switcher at a handful of windows. The overlay
+  -- reads those from its own toplevel list instead.
   local items = {}
   for index, entry in ipairs(state.entries) do
-    items[index] = table.concat({
-      '{"address":',
-      jstr(entry.address),
-      ',"class":',
-      jstr(entry.class),
-      ',"title":',
-      jstr(entry.title),
-      ',"workspace":',
-      jstr(entry.workspace),
-      ',"active":',
-      tostring(entry.active),
-      "}",
-    })
+    items[index] = jstr(entry.address)
   end
 
   emit(table.concat({
@@ -94,14 +85,7 @@ local function collect()
 
   local entries = {}
   for index, window in ipairs(windows) do
-    local workspace = window.workspace
-    entries[index] = {
-      address = window.address,
-      class = window.class,
-      title = window.title,
-      workspace = workspace and (workspace.name or tostring(workspace.id)) or "",
-      active = window.active == true,
-    }
+    entries[index] = { address = window.address }
   end
 
   return entries
