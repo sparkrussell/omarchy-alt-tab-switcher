@@ -18,12 +18,15 @@ ShellRoot {
   readonly property string channel: "omarchy-switcher>>"
 
   property bool shown: false
+  // Window addresses in switcher order. Titles, classes and workspaces are
+  // looked up from Hyprland.toplevels (windowFor), because Hyprland truncates
+  // the custom event carrying this list at 1024 bytes.
   property var entries: []
   property int selected: 0
   property string monitor: ""
 
   readonly property var selectedEntry: root.selected >= 0 && root.selected < root.entries.length
-    ? root.entries[root.selected]
+    ? root.windowFor(root.entries[root.selected])
     : null
 
   // --- theme -----------------------------------------------------------------
@@ -50,10 +53,14 @@ ShellRoot {
 
   // --- compositor plumbing ---------------------------------------------------
 
-  function toplevelFor(address: string): var {
+  function windowFor(address: string): var {
     const wanted = String(address).replace(/^0x/, "");
-    const match = Hyprland.toplevels.values.find(t => String(t.address).replace(/^0x/, "") === wanted);
-    return match ? match.wayland : null;
+    return Hyprland.toplevels.values.find(t => String(t.address).replace(/^0x/, "") === wanted) || null;
+  }
+
+  function toplevelFor(address: string): var {
+    const window = root.windowFor(address);
+    return window ? window.wayland : null;
   }
 
   function dispatchLua(call: string): void {
@@ -172,6 +179,11 @@ ShellRoot {
                   required property var modelData
                   required property int index
 
+                  readonly property var hyprWindow: root.windowFor(cell.modelData)
+                  readonly property string appClass: cell.hyprWindow
+                    ? (cell.hyprWindow.lastIpcObject.class || (cell.hyprWindow.wayland ? cell.hyprWindow.wayland.appId : ""))
+                    : ""
+
                   readonly property bool current: cell.index === root.selected
 
                   width: overlay.cellWidth
@@ -194,7 +206,7 @@ ShellRoot {
                     ScreencopyView {
                       id: thumb
                       anchors.centerIn: parent
-                      captureSource: root.toplevelFor(cell.modelData.address)
+                      captureSource: root.toplevelFor(cell.modelData)
                       live: true
                       paintCursor: false
 
@@ -213,7 +225,7 @@ ShellRoot {
                     Image {
                       anchors.centerIn: parent
                       visible: !thumb.hasContent
-                      source: Quickshell.iconPath(cell.modelData.class, "application-x-executable")
+                      source: Quickshell.iconPath(cell.appClass, "application-x-executable")
                       sourceSize.width: 48
                       sourceSize.height: 48
                     }
@@ -228,7 +240,7 @@ ShellRoot {
                       width: 16
                       height: 16
                       anchors.verticalCenter: parent.verticalCenter
-                      source: Quickshell.iconPath(cell.modelData.class, "application-x-executable")
+                      source: Quickshell.iconPath(cell.appClass, "application-x-executable")
                       sourceSize.width: 16
                       sourceSize.height: 16
                     }
@@ -238,7 +250,7 @@ ShellRoot {
                       // icon + both spacings + workspace badge
                       width: Math.max(0, parent.width - 16 - 12 - wsBadge.width)
                       elide: Text.ElideRight
-                      text: cell.modelData.class || cell.modelData.title
+                      text: cell.appClass || (cell.hyprWindow ? cell.hyprWindow.title : "")
                       color: cell.current ? root.textColor : root.textMuted
                       font.pixelSize: 12
                       font.bold: cell.current
@@ -247,7 +259,7 @@ ShellRoot {
                     Text {
                       id: wsBadge
                       anchors.verticalCenter: parent.verticalCenter
-                      text: cell.modelData.workspace
+                      text: cell.hyprWindow && cell.hyprWindow.workspace ? cell.hyprWindow.workspace.name : ""
                       color: root.textMuted
                       font.pixelSize: 11
                     }
@@ -258,9 +270,9 @@ ShellRoot {
                     hoverEnabled: true
                     onPositionChanged: overlay.pointerLive = true
                     onEntered: {
-                      if (overlay.pointerLive) root.dispatchLua("hover(\"" + cell.modelData.address + "\")");
+                      if (overlay.pointerLive) root.dispatchLua("hover(\"" + cell.modelData + "\")");
                     }
-                    onClicked: root.dispatchLua("pick(\"" + cell.modelData.address + "\")")
+                    onClicked: root.dispatchLua("pick(\"" + cell.modelData + "\")")
                   }
                 }
               }
