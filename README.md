@@ -9,6 +9,14 @@ No new packages: the key handling is Hyprland's own Lua config API, and the
 overlay is a standalone [Quickshell](https://quickshell.org/) process using
 `ScreencopyView` against each window's Wayland toplevel.
 
+![The switcher open over a workspace, showing live thumbnails of four windows](docs/screenshot.png)
+
+Selection is highlighted with the theme's accent color; each cell carries the
+app icon, its class, and the workspace it lives on, with the selected window's
+title underneath:
+
+![Close-up of the switcher card](docs/switcher-card.png)
+
 ## Requirements
 
 - Hyprland 0.56+ with the Lua config (Omarchy's `~/.config/hypr/*.lua` layout)
