@@ -206,7 +206,12 @@ ShellRoot {
                     ScreencopyView {
                       id: thumb
                       anchors.centerIn: parent
-                      captureSource: root.toplevelFor(cell.modelData)
+                      // Capture only while shown. A hidden overlay (including one
+                      // Variants builds for a monitor reconnecting on DPMS wake)
+                      // would otherwise request toplevel frames for windows that
+                      // have no monitor yet, which segfaults Hyprland 0.56.2
+                      // (ScreenshareSession.cpp:85 dereferences a null monitor).
+                      captureSource: root.shown ? root.toplevelFor(cell.modelData) : null
                       live: true
                       paintCursor: false
 
