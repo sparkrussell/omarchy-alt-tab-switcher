@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.sparkrussell.alt-tab-switcher",
+  "name": "Live Alt-Tab",
+  "version": "1.0.0",
+  "author": "sparkrussell",
+  "license": "MIT",
+  "description": "Hold-to-preview Alt-Tab window switcher with live thumbnails of every window, across workspaces and monitors.",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  },
+  "repository": "https://github.com/sparkrussell/omarchy-alt-tab-switcher"
+}

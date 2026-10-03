@@ -1,10 +1,9 @@
 -- Alt-Tab window switcher with live thumbnails.
 --
 -- This module owns the switcher's key handling and selection state. The
--- thumbnail overlay is a separate Quickshell process
--- (~/.config/quickshell/omarchy-switcher, started from autostart.lua) that only
--- renders what this module publishes, so window switching keeps working even
--- when the overlay is not running.
+-- thumbnail overlay is the Omarchy shell plugin in this repo (Service.qml,
+-- running inside omarchy-shell) that only renders what this module publishes,
+-- so window switching keeps working even when the plugin is not enabled.
 --
 -- Wire protocol (both directions go through Hyprland's own IPC):
 --   Lua -> overlay: hl.dsp.event("omarchy-switcher>>" .. json) which the
