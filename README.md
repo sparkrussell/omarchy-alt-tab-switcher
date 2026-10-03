@@ -46,8 +46,9 @@ end
 ```
 
 Then `hyprctl reload`. Update later with
-`omarchy plugin update sparkrussell.alt-tab-switcher` (plus `hyprctl reload`
-if `hypr/switcher.lua` changed).
+`omarchy plugin update sparkrussell.alt-tab-switcher`, then
+`omarchy restart shell` (the overlay is a `keepLoaded` service, so new code only
+loads on a shell restart) and `hyprctl reload` (for `hypr/switcher.lua`).
 
 ## Keys
 
