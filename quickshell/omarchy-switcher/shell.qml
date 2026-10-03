@@ -122,9 +122,21 @@ ShellRoot {
       exclusionMode: ExclusionMode.Ignore
       color: "transparent"
 
-      readonly property int cellWidth: Math.round(Math.max(190, Math.min(300, overlay.width * 0.135)))
-      readonly property int cellHeight: Math.round(overlay.cellWidth * 0.72)
       readonly property int cellSpacing: 12
+      // Label strip under each thumbnail.
+      readonly property int labelHeight: 34
+      // Preferred cell width from the screen width alone.
+      readonly property int baseWidth: Math.round(Math.max(219, Math.min(345, overlay.width * 0.155)))
+      readonly property int baseColumns: Math.max(1, Math.min(root.entries.length,
+        Math.floor((overlay.width * 0.92 + overlay.cellSpacing) / (overlay.baseWidth + overlay.cellSpacing))))
+      readonly property int rows: Math.max(1, Math.ceil(root.entries.length / overlay.baseColumns))
+      // Shrink cells when that many rows would overflow 92% of the screen
+      // height. 72 = card padding (32) + column spacing (10) + title line (~30).
+      readonly property int heightFitWidth: Math.floor(
+        ((overlay.height * 0.92 - 72 - (overlay.rows - 1) * overlay.cellSpacing) / overlay.rows
+          - overlay.labelHeight) / 0.72)
+      readonly property int cellWidth: Math.max(80, Math.min(overlay.baseWidth, overlay.heightFitWidth))
+      readonly property int cellHeight: Math.round(overlay.cellWidth * 0.72)
       readonly property int columns: Math.max(1, Math.min(root.entries.length,
         Math.floor((overlay.width * 0.92 + overlay.cellSpacing) / (overlay.cellWidth + overlay.cellSpacing))))
 
@@ -187,7 +199,7 @@ ShellRoot {
                   readonly property bool current: cell.index === root.selected
 
                   width: overlay.cellWidth
-                  height: overlay.cellHeight + 30
+                  height: overlay.cellHeight + overlay.labelHeight
                   radius: 12
                   color: cell.current
                     ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.16)
@@ -257,7 +269,7 @@ ShellRoot {
                       elide: Text.ElideRight
                       text: cell.appClass || (cell.hyprWindow ? cell.hyprWindow.title : "")
                       color: cell.current ? root.textColor : root.textMuted
-                      font.pixelSize: 12
+                      font.pixelSize: 14
                       font.bold: cell.current
                     }
 
@@ -266,7 +278,7 @@ ShellRoot {
                       anchors.verticalCenter: parent.verticalCenter
                       text: cell.hyprWindow && cell.hyprWindow.workspace ? cell.hyprWindow.workspace.name : ""
                       color: root.textMuted
-                      font.pixelSize: 11
+                      font.pixelSize: 13
                     }
                   }
 
@@ -289,7 +301,7 @@ ShellRoot {
               elide: Text.ElideMiddle
               text: root.selectedEntry ? root.selectedEntry.title : ""
               color: root.textColor
-              font.pixelSize: 13
+              font.pixelSize: 15
             }
           }
         }
