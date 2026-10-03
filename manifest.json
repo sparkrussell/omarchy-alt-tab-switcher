@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "sparkrussell.alt-tab-switcher",
-  "name": "Alt-Tab Switcher",
+  "id": "io.github.sparkrussell.alt-tab-switcher",
+  "name": "Live Alt-Tab",
   "version": "1.0.0",
   "author": "sparkrussell",
   "license": "MIT",

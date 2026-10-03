@@ -1,4 +1,4 @@
-# omarchy-alt-tab-switcher
+# Live Alt-Tab
 
 A hold-to-preview Alt-Tab window switcher for [Omarchy](https://omarchy.org/) /
 Hyprland: hold `ALT`, tap `TAB` to cycle, and a centered card shows **live
@@ -36,8 +36,8 @@ Plugins can't register Hyprland keybinds, so add the key handling to
 Hyprland config loading if the plugin is later removed:
 
 ```lua
--- Alt-Tab window switcher (Omarchy plugin sparkrussell.alt-tab-switcher).
-local alt_tab = os.getenv("HOME") .. "/.config/omarchy/plugins/sparkrussell.alt-tab-switcher/hypr/switcher.lua"
+-- Alt-Tab window switcher (Omarchy plugin io.github.sparkrussell.alt-tab-switcher).
+local alt_tab = os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.sparkrussell.alt-tab-switcher/hypr/switcher.lua"
 local alt_tab_file = io.open(alt_tab)
 if alt_tab_file then
   alt_tab_file:close()
@@ -46,7 +46,7 @@ end
 ```
 
 Then `hyprctl reload`. Update later with
-`omarchy plugin update sparkrussell.alt-tab-switcher`, then
+`omarchy plugin update io.github.sparkrussell.alt-tab-switcher`, then
 `omarchy restart shell` (the overlay is a `keepLoaded` service, so new code only
 loads on a shell restart) and `hyprctl reload` (for `hypr/switcher.lua`).
 
@@ -120,7 +120,7 @@ Also worth knowing: `hl.unbind` is not submap aware, so Omarchy's default
 ## Uninstall
 
 ```bash
-omarchy plugin remove sparkrussell.alt-tab-switcher
+omarchy plugin remove io.github.sparkrussell.alt-tab-switcher
 ```
 
 Then delete the Alt-Tab block from `~/.config/hypr/hyprland.lua` and run
