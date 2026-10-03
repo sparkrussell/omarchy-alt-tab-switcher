@@ -2,7 +2,7 @@ name: CI
 
 # Static-only gates. Everything this project does at runtime needs a live
 # Hyprland compositor plus Quickshell against real Wayland toplevels, none of
-# which a stock GitHub runner has, so CI lints the three sources for syntax and
+# which a stock GitHub runner has, so CI lints the sources for syntax and
 # obvious mistakes rather than pretending to exercise behavior.
 on:
   push:
@@ -45,18 +45,23 @@ jobs:
       # qmllint type-check would drown in unresolved-import noise. qmlformat only
       # parses the grammar (no module resolution) and exits non-zero on a syntax
       # error, which is exactly the regression we want to catch.
-      - name: Parse-check shell.qml
-        run: /usr/lib/qt6/bin/qmlformat quickshell/omarchy-switcher/shell.qml > /dev/null
+      - name: Parse-check Service.qml
+        run: /usr/lib/qt6/bin/qmlformat Service.qml > /dev/null
 
-  shell:
-    name: Shell (shellcheck)
+  manifest:
+    name: Plugin manifest (jq)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck
+      # The core of `omarchy plugin validate` (not installable on the runner):
+      # schemaVersion 1, required fields, non-reserved id, entry point exists,
+      # and no symlinks anywhere in the plugin folder.
+      - name: Check manifest.json
         run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
-      - name: Lint install.sh
-        run: shellcheck install.sh
+          jq -e '.schemaVersion == 1
+            and (.id | test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and (.id | startswith("omarchy.") | not)
+            and (.name | length > 0) and (.version | length > 0)
+            and (.kinds == ["service"]) and (.entryPoints.service == "Service.qml")' manifest.json
+          test -f Service.qml
+          test -z "$(find . -name .git -prune -o -type l -print)"

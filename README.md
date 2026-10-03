@@ -6,7 +6,7 @@ thumbnails** of every open window — including windows on other workspaces and
 other monitors. Release `ALT` to switch.
 
 No new packages: the key handling is Hyprland's own Lua config API, and the
-overlay is a standalone [Quickshell](https://quickshell.org/) process using
+overlay is an Omarchy shell plugin ([Quickshell](https://quickshell.org/)) using
 `ScreencopyView` against each window's Wayland toplevel.
 
 ![The switcher open over a workspace, showing live thumbnails of four windows](docs/screenshot.png)
@@ -24,26 +24,30 @@ title underneath:
 
 ## Install
 
+This is an [Omarchy shell plugin](https://plugins.omarchy.org/): the overlay
+runs inside `omarchy-shell` as a service.
+
 ```bash
-git clone https://github.com/sparkrussell/omarchy-alt-tab-switcher.git ~/projects/omarchy-alt-tab-switcher
-~/projects/omarchy-alt-tab-switcher/install.sh
+omarchy plugin add https://github.com/sparkrussell/omarchy-alt-tab-switcher.git --enable
 ```
 
-The installer symlinks
+Plugins can't register Hyprland keybinds, so add the key handling to
+`~/.config/hypr/hyprland.lua` yourself. The existence check keeps your
+Hyprland config loading if the plugin is later removed:
 
-| Repo file | Installed path |
-|---|---|
-| `hypr/switcher.lua` | `~/.config/hypr/switcher.lua` |
-| `quickshell/omarchy-switcher/` | `~/.config/quickshell/omarchy-switcher/` |
+```lua
+-- Alt-Tab window switcher (Omarchy plugin sparkrussell.alt-tab-switcher).
+local alt_tab = os.getenv("HOME") .. "/.config/omarchy/plugins/sparkrussell.alt-tab-switcher/hypr/switcher.lua"
+local alt_tab_file = io.open(alt_tab)
+if alt_tab_file then
+  alt_tab_file:close()
+  dofile(alt_tab)
+end
+```
 
-and appends the loader lines to `~/.config/hypr/hyprland.lua`
-(`require("hypr.switcher")`) and `~/.config/hypr/autostart.lua`
-(`o.exec_on_start("qs -c omarchy-switcher -n -d")`). It is idempotent; existing
-non-symlink files are moved to `*.bak.<timestamp>`.
-
-Because the files are symlinks back into the repo, editing the repo is editing
-the live config. Quickshell hot-reloads `shell.qml` on save; the Lua module
-needs `hyprctl reload`.
+Then `hyprctl reload`. Update later with
+`omarchy plugin update sparkrussell.alt-tab-switcher` (plus `hyprctl reload`
+if `hypr/switcher.lua` changed).
 
 ## Keys
 
@@ -62,17 +66,17 @@ terminals) are skipped. An unattended switcher cancels itself after 10 s.
 
 ## Design
 
-Two processes, talking over Hyprland's own IPC:
+Two halves, talking over Hyprland's own IPC:
 
 ```
-~/.config/hypr/switcher.lua                 ~/.config/quickshell/omarchy-switcher
+hypr/switcher.lua (Hyprland Lua)          Service.qml (omarchy-shell plugin)
   keybinds, submap, MRU list, selection       thumbnails, labels, theming
              |  hl.dsp.event("omarchy-switcher>>{json}")  ->  custom>> on socket2
              |  <-  hyprctl dispatch 'omarchy_switcher.pick("0x…")'
 ```
 
 The Lua module is the single source of truth and performs the focus itself, so
-**if the overlay process is not running, Alt-Tab still switches windows** — you
+**if the plugin is disabled, Alt-Tab still switches windows** — you
 just lose the visuals.
 
 Public Lua entry points (also usable from scripts or your own binds):
@@ -115,13 +119,11 @@ Also worth knowing: `hl.unbind` is not submap aware, so Omarchy's default
 ## Uninstall
 
 ```bash
-rm ~/.config/hypr/switcher.lua ~/.config/quickshell/omarchy-switcher
-pkill -f 'qs -c omarchy-switcher'
+omarchy plugin remove sparkrussell.alt-tab-switcher
 ```
 
-Then delete the `require("hypr.switcher")` line from `~/.config/hypr/hyprland.lua`
-and the `qs -c omarchy-switcher` line from `~/.config/hypr/autostart.lua`, and
-run `hyprctl reload`. Omarchy's stock `ALT+TAB` bindings come back on reload.
+Then delete the Alt-Tab block from `~/.config/hypr/hyprland.lua` and run
+`hyprctl reload`. Omarchy's stock `ALT+TAB` bindings come back on reload.
 
 ## License
 

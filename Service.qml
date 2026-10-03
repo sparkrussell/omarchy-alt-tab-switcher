@@ -1,9 +1,8 @@
-//@ pragma UseQApplication
-
-// Thumbnail overlay for the Alt-Tab window switcher.
+// Thumbnail overlay for the Alt-Tab window switcher, loaded by omarchy-shell
+// as a keepLoaded service plugin.
 //
-// State comes from ~/.config/hypr/switcher.lua over Hyprland's custom event
-// channel; this process only renders it. Clicks and hovers are sent back by
+// State comes from hypr/switcher.lua over Hyprland's custom event channel;
+// this service only renders it. Clicks and hovers are sent back by
 // dispatching into the Lua table that module publishes.
 
 import Quickshell
@@ -12,7 +11,7 @@ import Quickshell.Wayland
 import Quickshell.Hyprland
 import QtQuick
 
-ShellRoot {
+Item {
   id: root
 
   readonly property string channel: "omarchy-switcher>>"
