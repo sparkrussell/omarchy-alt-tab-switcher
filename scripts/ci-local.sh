@@ -5,7 +5,9 @@
 # about a commit. This runs the three checks the workflow lists, from the repo root whatever the
 # caller's cwd:
 #   a. luacheck hypr/switcher.lua     (respects this repo's .luacheckrc)
-#   b. qmlformat Service.qml          (grammar parse only; a syntax error exits non-zero)
+#   b. qmlformat Service.qml          (grammar parse only; a syntax error exits non-zero, and the
+#                                      formatted document must itself re-parse, which is how a
+#                                      truncated or stub document is caught)
 #   c. plugin manifest: the jq assertions at the core of `omarchy plugin validate` (schemaVersion 1,
 #      id shape, id not in the reserved omarchy.* namespace, non-empty name and version,
 #      kinds == ["service"], entryPoints.service == "Service.qml"), then that Service.qml exists and
@@ -50,10 +52,12 @@ trap 'echo "ci-local: interrupted" >&2; exit 130' INT TERM
 unset CI_LOCAL_SKIP
 
 # luacheck has to run on Lua 5.4: a rockspec built against the machine's default Lua 5.5 dies on
-# first require ("attempt to assign to const variable 'field_name'"), so the tree is pinned.
-# The hint is printed for the user to paste, so $HOME must stay literal.
+# first require ("attempt to assign to const variable 'field_name'"), so the tree is pinned. The hint
+# is printed for the user to paste, so $HOME must stay literal - and it has to be paste-and-run, so it
+# carries the luarocks/lua54 prerequisite and the mkdir that the symlink needs (without it, ln -sfn
+# into a missing ~/.local/bin exits non-zero).
 # shellcheck disable=SC2016
-LUACHECK_INSTALL='luarocks --lua-version=5.4 --tree="$HOME/.luarocks54" install luacheck 1.2.0 && ln -sfn "$HOME/.luarocks54/bin/luacheck" "$HOME/.local/bin/luacheck"'
+LUACHECK_INSTALL='sudo pacman -S --needed luarocks lua54 && mkdir -p "$HOME/.local/bin" && luarocks --lua-version=5.4 --tree="$HOME/.luarocks54" install luacheck 1.2.0 && ln -sfn "$HOME/.luarocks54/bin/luacheck" "$HOME/.local/bin/luacheck"'
 QMLFORMAT_INSTALL='sudo pacman -S --needed qt6-declarative'
 JQ_INSTALL='sudo pacman -S --needed jq'
 
@@ -147,10 +151,24 @@ fi
 # version merged them and required the first non-comment line to look like `import` - which rejected
 # valid QML whose first line is a `pragma` or a `/* */` header, and flipped a clean parse to FAIL on
 # any warning. So this asserts COMPLETENESS instead of first-token shape.
+#
+# Completeness is decided by qmlformat itself: the document it printed has to parse as a QML document
+# in its own right. Formatting is a fixed point (formatting the output again is byte-identical), and
+# a truncated document does not parse, so handing the output back to qmlformat is a true completeness
+# test that needs no lexer of its own. An earlier version counted braces with awk instead; that had
+# two fatal problems. It used `close` as a variable name, which is a gawk builtin, so the whole awk
+# program was a syntax error, the count came back empty, both [ ] tests errored to false and the check
+# silently never ran - a stub returning the first 7000 of 15445 formatted bytes passed. And even with
+# the name fixed it was not a QML/JS lexer: no single-quoted strings, no template literals and no
+# regex literals, so `property string a: '{'`, ``property string a: `{` `` or `property var r: /}/` in
+# an otherwise valid file made it count 2-vs-1 and false-FAIL. The scanner is gone, not disabled.
 
 step_qml() {
-  local out="$SCRATCH/b.stdout.log" err="$SCRATCH/b.stderr.log"
-  local in_bytes formatted_bytes opens closes tally rc
+  # The formatted document keeps a .qml name: qmlformat refuses any other extension, and the
+  # completeness check hands this exact file back to it.
+  local out="$SCRATCH/b.formatted.qml" err="$SCRATCH/b.stderr.log"
+  local in_bytes in_code formatted_code rc
+  REASON=""
   if "$QMLFORMAT" Service.qml >"$out" 2>"$err"; then
     :
   else
@@ -163,6 +181,7 @@ step_qml() {
     fi
     echo "qmlformat could not parse Service.qml (exit $rc). This Qt version prints no diagnostic for a"
     echo "grammar error; reproduce it directly with: $QMLFORMAT Service.qml"
+    REASON="qmlformat could not parse Service.qml (exit $rc)"
     return "$rc"
   fi
   # A diagnostic on stderr is shown but never judged: only stdout says whether the file parsed.
@@ -175,64 +194,63 @@ step_qml() {
   # hiding a "FAIL: ..." from a ^FAIL: grep.
   [ -n "$(tail -c 1 "$out" | tr -d '\n')" ] && echo
   in_bytes="$(wc -c <Service.qml)"
-  [ "$in_bytes" -gt 0 ] || { echo "FAIL: Service.qml is empty, so there was nothing to parse"; return 1; }
-  [ -s "$out" ] || { echo "FAIL: qmlformat exited 0 but printed no document, so it parsed nothing"; return 1; }
+  if [ "$in_bytes" -eq 0 ]; then
+    echo "FAIL: Service.qml is empty, so there was nothing to parse"
+    REASON="Service.qml is empty"
+    return 1
+  fi
+  if [ ! -s "$out" ]; then
+    echo "FAIL: qmlformat exited 0 but printed no document, so it parsed nothing"
+    REASON="qmlformat exited 0 but printed no document"
+    return 1
+  fi
   if [ -z "$(tr -d '[:space:]' <"$out")" ]; then
     echo "FAIL: qmlformat exited 0 but printed only whitespace, so it parsed nothing"
+    REASON="qmlformat exited 0 but printed only whitespace"
     return 1
   fi
   if grep -qE '^[[:space:]]*[Uu]sage:' "$out"; then
     echo "FAIL: qmlformat printed a usage string instead of a formatted document, so it parsed nothing:"
     head -n 3 "$out" | sed 's/^/    /'
+    REASON="qmlformat printed a usage string, not a document"
     return 1
   fi
-  # qmlformat reprints the whole document, comments included, and never shrinks it below the input.
-  # Half of Service.qml's own size is therefore the floor, which scales with the file: a small but
-  # genuinely complete document passes, while a stub or a truncated document cannot.
-  formatted_bytes="$(wc -c <"$out")"
-  if [ "$formatted_bytes" -lt $((in_bytes / 2)) ]; then
-    echo "FAIL: qmlformat returned $formatted_bytes bytes for a $in_bytes-byte Service.qml (under half),"
-    echo "      so the document came back truncated rather than formatted"
+  # The completeness oracle. A stub, a silently truncated write, or any other exit-0 that returns
+  # part of the document fails here, whatever the document happens to contain: qmlformat cannot parse
+  # an incomplete document. This is why no brace/string/comment counting is needed anywhere.
+  if ! "$QMLFORMAT" "$out" >/dev/null 2>&1; then
+    echo "FAIL: qmlformat's own output does not parse as a complete QML document, so what came back"
+    echo "      is not the whole formatted Service.qml (truncated?)"
+    REASON="qmlformat's own output does not re-parse (document truncated)"
     return 1
   fi
-  # Braces OUTSIDE strings and comments decide nothing else: a `text: "{"` or a `/* } */` header must
-  # not be able to produce a FAIL, which is the class of false FAIL the old first-line guard made.
-  tally="$(awk '
-    { line = $0; n = length(line); i = 1
-      while (i <= n) {
-        c = substr(line, i, 1); two = substr(line, i, 2)
-        if (blk) { if (two == "*/") { blk = 0; i += 2 } else i++; continue }
-        if (str) { if (c == "\\") { i += 2; continue } if (c == "\"") str = 0; i++; continue }
-        if (two == "//") break
-        if (two == "/*") { blk = 1; i += 2; continue }
-        if (c == "\"") { str = 1; i++; continue }
-        if (c == "{") open++
-        if (c == "}") close++
-        i++
-      } }
-    END { printf "%d %d\n", open, close }
-  ' "$out")"
-  opens="${tally% *}"; closes="${tally#* }"
-  if [ "$opens" -ne "$closes" ] || [ "$opens" -eq 0 ]; then
-    echo "FAIL: qmlformat output is not a balanced QML document ($opens '{' vs $closes '}'),"
-    echo "      so it is not the whole formatted Service.qml"
+  # A floor on NON-whitespace bytes, so a valid file that is mostly indentation cannot false-FAIL: a
+  # 2246-byte file of blanks around a 48-byte document is complete, and its code size is 48 either
+  # way. At 50% this only catches an output that is a fragment even by code size; truncation itself
+  # is the oracle's job above, not this line's.
+  in_code="$(tr -d '[:space:]' <Service.qml | wc -c)"
+  formatted_code="$(tr -d '[:space:]' <"$out" | wc -c)"
+  if [ "$formatted_code" -lt $((in_code / 2)) ]; then
+    echo "FAIL: qmlformat returned $formatted_code bytes of code for the $in_code bytes of code in"
+    echo "      Service.qml (under half), so the document came back truncated rather than formatted"
+    REASON="qmlformat returned $formatted_code of $in_code code bytes (under half)"
     return 1
   fi
   return 0
 }
 
 if [ -n "$QMLFORMAT" ]; then
+  REASON=""
   run_step "b. QML parse check ($QMLFORMAT Service.qml)" "$SCRATCH/b.log" step_qml
   rc=$STEP_RC
   if [ "$rc" -eq 0 ]; then
     detail="$("$QMLFORMAT" --version 2>/dev/null || echo qmlformat) parsed Service.qml"
     echo "    $detail"
   else
-    # Mirror step a: quote the guard's own FAIL: line, and for a genuine parse error the exit line -
-    # either way never a blanket "parse error". An exit 0 that printed a stub fails too, so a failed
-    # run is not necessarily a parse failure.
-    detail="$(grep -m1 -oE 'FAIL:.*|qmlformat could not parse Service\.qml \(exit [0-9]+\)' "$SCRATCH/b.log")"
-    [ -n "$detail" ] || detail="qmlformat could not parse Service.qml (see the output above)"
+    # The failing guard names itself through REASON: never grep b.log, which also holds the formatted
+    # document, so a QML comment containing "FAIL:" would be quoted as the summary detail instead of
+    # the guard's message - and a two-line guard message came out truncated at a stray comma.
+    detail="${REASON:-qmlformat could not parse Service.qml (see the output above)}"
   fi
   record "b. qml parse" "$([ "$rc" -eq 0 ] && echo PASS || echo FAIL)" "$detail"
 else
