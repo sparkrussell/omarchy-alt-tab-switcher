@@ -128,9 +128,10 @@ Then delete the Alt-Tab block from `~/.config/hypr/hyprland.lua` and run
 
 ## CI is the local gate
 
-GitHub Actions is **disabled at the repository level** for this repo. `.github/workflows/ci.yml` is
-kept only as the record of what used to run — a red or missing check there means nothing. The
-authoritative gate is `scripts/ci-local.sh`:
+`scripts/ci-local.sh` is the authoritative gate for this repo — it is what decides whether a change is
+good. `.github/workflows/ci.yml` is retained only as the record of what the gate mirrors: it no longer
+triggers on push or on pull request (it is `workflow_dispatch` only), so a check there says nothing
+about a commit.
 
 ```bash
 bash scripts/ci-local.sh            # run the gate
@@ -151,14 +152,43 @@ in unresolved-import noise; `qmlformat` parses the grammar without module resolu
 regression worth catching.
 
 **A missing tool is a SKIP, never a silent pass.** The step says which tool is missing and prints the
-exact install command, and the run warns that the gate is degraded. On Arch:
+exact install command, and the run warns that the gate is degraded.
+
+#### Installing the tools
+
+`luacheck` must be built against **Lua 5.4**. On Arch, `luarocks` defaults to Lua 5.5, and a luacheck
+installed that way resolves its modules from a `5.5` tree and dies on the first require:
+
+```
+lua5.5: .../luacheck/standards.lua:134: attempt to assign to const variable 'field_name'
+```
+
+A plain `luarocks install luacheck` is therefore not enough, and a Lua 5.5 build sitting earlier on
+`PATH` is worse than no luacheck at all. Install into a 5.4 tree and link it onto `PATH`:
 
 ```bash
-sudo pacman -S --needed lua luarocks && sudo luarocks install luacheck 1.2.0
+luarocks --lua-version=5.4 --tree="$HOME/.luarocks54" install luacheck 1.2.0
+ln -sfn "$HOME/.luarocks54/bin/luacheck" "$HOME/.local/bin/luacheck"
+```
+
+`~/.local/bin` must be on `PATH`. Confirm the build before trusting the gate — `luacheck --version`
+has to report both lines:
+
+```
+Luacheck: 1.2.0
+Lua: PUC-Rio Lua 5.4
+```
+
+`qmlformat` comes from Qt 6:
+
+```bash
 sudo pacman -S --needed qt6-declarative     # provides /usr/lib/qt6/bin/qmlformat
 ```
 
-`jq` is required for step c: without it the manifest check fails loudly rather than skipping.
+The gate falls back to `/usr/lib/qt6/bin/qmlformat` when it is not on `PATH`.
+
+`jq` is required for step c: without it the manifest check fails loudly rather than skipping
+(`sudo pacman -S --needed jq`).
 
 ### Install the pre-push hook (opt-in)
 
@@ -170,14 +200,24 @@ bash scripts/install-git-hooks.sh --uninstall  # remove
 The hook checks out each distinct pushed commit into a temporary detached worktree and runs that
 tree's `scripts/ci-local.sh`, blocking the push on failure. It ignores tag pushes and branch
 deletions. Re-running the installer is a no-op; a pre-existing foreign `pre-push` hook is kept as
-`pre-push.bak-<timestamp>`. The only bypass is explicit and loud:
-`CI_LOCAL_SKIP=1 git push` (git's own `--no-verify` also skips hooks, silently — don't).
+`pre-push.bak-<timestamp>`.
+
+By default the hook runs the gate **without** `--strict`, so a SKIP does not block a push. Push with
+`CI_LOCAL_STRICT=1` to make the hook enforce the merge rule — a missing tool then blocks the push:
+
+```bash
+CI_LOCAL_STRICT=1 git push     # SKIP counts as a failure, same as --strict
+```
+
+The bypass is explicit and loud: `CI_LOCAL_SKIP=1 git push` (git's own `--no-verify` also skips
+hooks, silently — don't).
 
 ### Merge rule
 
-A PR merges only when `bash scripts/ci-local.sh --strict` exits 0 on a machine with `jq`,
-`luacheck` and `qmlformat` installed. Without `--strict` a SKIP is not a failure, so a degraded run
-is not a merge signal — it means the gate has not looked at that step yet.
+A PR merges only when `bash scripts/ci-local.sh --strict` exits 0 — `3 passed, 0 failed, 0 skipped`.
+Without `--strict` a SKIP is not a failure, so a degraded run is not a merge signal — it means the
+gate has not looked at that step yet. The pre-push hook does not enforce this unless you push with
+`CI_LOCAL_STRICT=1`.
 
 ## License
 

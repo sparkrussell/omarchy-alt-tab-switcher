@@ -1,6 +1,7 @@
-# DISABLED at the repository level: GitHub Actions does not run this workflow, and a red or missing
-# check here means nothing. scripts/ci-local.sh is the authoritative gate; this file is kept only as
-# the record of what that script mirrors. Run `bash scripts/ci-local.sh --strict` before merging.
+# The record of what the gate mirrors - not a gate. scripts/ci-local.sh is the authoritative gate for
+# this repo; this file no longer triggers on push or on pull request, so a check here says nothing
+# about a commit. It is kept only so the same three checks are written down in one place, and can still
+# be run by hand via workflow_dispatch. Run `bash scripts/ci-local.sh --strict` before merging.
 name: CI
 
 # Static-only gates. Everything this project does at runtime needs a live
@@ -8,9 +9,9 @@ name: CI
 # which a stock GitHub runner has, so CI lints the sources for syntax and
 # obvious mistakes rather than pretending to exercise behavior.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Deliberately no push/pull_request trigger: scripts/ci-local.sh decides, not GitHub. This keeps
+  # the checks documented without a workflow result that could be mistaken for the gate.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

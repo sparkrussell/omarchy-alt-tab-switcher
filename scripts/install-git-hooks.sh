@@ -10,8 +10,13 @@
 # The hook runs scripts/ci-local.sh once per distinct pushed commit (checked out into a temporary
 # detached worktree under $HOME, so the state of the working tree does not matter) and blocks the push
 # when the gate fails. It gates by the REMOTE ref (so `git push origin HEAD` is gated) and skips
-# deletions and tag pushes. The only supported bypass is explicit and loud (git's own --no-verify also
-# skips hooks, silently; do not use it):
+# deletions and tag pushes.
+#
+# The hook passes no flags by default, so a SKIP does not block a push. Set CI_LOCAL_STRICT=1 to make
+# the hook run `scripts/ci-local.sh --strict` - then a missing tool blocks the push too, which is the
+# documented merge rule. The bypass is explicit and loud (git's own --no-verify also skips hooks,
+# silently; do not use it):
+#   CI_LOCAL_STRICT=1 git push
 #   CI_LOCAL_SKIP=1 git push
 #
 # Re-running is a no-op. A different pre-push hook already there is kept as pre-push.bak-<timestamp>.
@@ -47,7 +52,7 @@ done
 if [ "${CI_LOCAL_SKIP:-}" = "1" ]; then
   echo "" >&2
   echo "!!! WARNING: CI_LOCAL_SKIP=1 - the local CI gate (scripts/ci-local.sh) was NOT run for this push. !!!" >&2
-  echo "!!! GitHub Actions is disabled for this repo, so NOTHING checked this push. Run the gate before merging. !!!" >&2
+  echo "!!! scripts/ci-local.sh is the authoritative gate, so NOTHING checked this push. Run it before merging. !!!" >&2
   echo "" >&2
   exit 0
 fi
@@ -86,7 +91,9 @@ for sha in $(printf '%s' "$pairs" | awk '!seen[$1]++ {print $1}'); do
     continue
   fi
   # git exports repository variables to hooks; the gate runs its own commands, so do not leak them.
-  if ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR; cd "$wt" && bash scripts/ci-local.sh </dev/null >&2 ); then
+  # CI_LOCAL_STRICT=1 adds --strict so a SKIP blocks the push as well. The expansion yields either
+  # exactly "--strict" or nothing, so the variable's value is never word-split into the command.
+  if ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR; cd "$wt" && bash scripts/ci-local.sh ${CI_LOCAL_STRICT:+--strict} </dev/null >&2 ); then
     :
   else
     echo "pre-push: the local CI gate FAILED on commit $short." >&2
@@ -120,11 +127,11 @@ mkdir -p "$HOOKS" || exit 2
 NEW="$(mktemp "$HOOKS/.pre-push.new.XXXXXX")" || exit 2
 trap 'rm -f "$NEW"' EXIT
 hook_body >"$NEW"
-chmod +x "$NEW"
+chmod 0755 "$NEW"
 
 if [ -e "$HOOK" ]; then
   if cmp -s "$NEW" "$HOOK"; then
-    chmod +x "$HOOK"
+    chmod 0755 "$HOOK"
     echo "install-git-hooks: pre-push hook already installed at $HOOK (no change)."
     exit 0
   fi
@@ -138,4 +145,5 @@ if [ -e "$HOOK" ]; then
 fi
 mv "$NEW" "$HOOK" || exit 2
 echo "install-git-hooks: installed $HOOK"
-echo "  git push now runs scripts/ci-local.sh first and blocks on failure. Bypass (loud): CI_LOCAL_SKIP=1 git push"
+echo "  git push now runs scripts/ci-local.sh first and blocks on failure. A SKIP does not block unless"
+echo "  you push with CI_LOCAL_STRICT=1. Bypass (loud): CI_LOCAL_SKIP=1 git push"

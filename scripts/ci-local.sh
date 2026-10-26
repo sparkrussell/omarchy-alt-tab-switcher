@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# The local CI gate. GitHub Actions is disabled at the repository level for this repo, so this script
-# is the authoritative gate. It runs the three checks .github/workflows/ci.yml still lists (that file
-# is kept only as the record of what the gate mirrors), from the repo root whatever the caller's cwd:
+# The local CI gate, and the authoritative one: this script, not GitHub, decides whether a change is
+# good. .github/workflows/ci.yml is retained only as the record of what the gate mirrors - it no
+# longer triggers on push or on pull request (workflow_dispatch only), so a check there says nothing
+# about a commit. This runs the three checks the workflow lists, from the repo root whatever the
+# caller's cwd:
 #   a. luacheck hypr/switcher.lua     (respects this repo's .luacheckrc)
 #   b. qmlformat Service.qml          (grammar parse only; a syntax error exits non-zero)
 #   c. plugin manifest: the jq assertions at the core of `omarchy plugin validate` (schemaVersion 1,
@@ -11,12 +13,13 @@
 # Every step runs even if an earlier one failed; the exit status is non-zero if any step FAILED.
 #
 # A check whose tool is not installed reports SKIP - never a silent pass - and prints the exact
-# install command. --strict promotes SKIP to FAIL, which is the merge rule once the tools exist.
+# install command. --strict promotes SKIP to FAIL, which is the merge rule. luacheck must be built
+# against Lua 5.4: a Lua 5.5 build dies on first require, so the install hint pins the version.
 #
 #   bash scripts/ci-local.sh [--strict]
 #
-# Merge rule: a PR merges only after `bash scripts/ci-local.sh --strict` exits 0 on a machine with
-# jq, luacheck and qmlformat installed. See "CI is the local gate" in README.md.
+# Merge rule: a PR merges only after `bash scripts/ci-local.sh --strict` exits 0. See "CI is the
+# local gate" in README.md.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || { echo "ci-local: cannot resolve the repo root from ${BASH_SOURCE[0]}" >&2; exit 2; }
@@ -46,7 +49,11 @@ trap 'echo "ci-local: interrupted" >&2; exit 130' INT TERM
 # CI_LOCAL_SKIP only means something to the pre-push hook; do not let it reach the steps.
 unset CI_LOCAL_SKIP
 
-LUACHECK_INSTALL='sudo pacman -S --needed lua luarocks && sudo luarocks install luacheck 1.2.0'
+# luacheck has to run on Lua 5.4: a rockspec built against the machine's default Lua 5.5 dies on
+# first require ("attempt to assign to const variable 'field_name'"), so the tree is pinned.
+# The hint is printed for the user to paste, so $HOME must stay literal.
+# shellcheck disable=SC2016
+LUACHECK_INSTALL='luarocks --lua-version=5.4 --tree="$HOME/.luarocks54" install luacheck 1.2.0 && ln -sfn "$HOME/.luarocks54/bin/luacheck" "$HOME/.local/bin/luacheck"'
 QMLFORMAT_INSTALL='sudo pacman -S --needed qt6-declarative'
 JQ_INSTALL='sudo pacman -S --needed jq'
 
@@ -119,9 +126,16 @@ step_lua() {
 if command -v luacheck >/dev/null 2>&1; then
   run_step "a. Lua lint (luacheck hypr/switcher.lua)" "$SCRATCH/a.log" step_lua
   rc=$STEP_RC
-  detail="$(grep -E '^Total:' "$SCRATCH/a.log" | tail -n1)"
-  [ -n "$detail" ] && [ "$rc" -eq 0 ] && echo "    $detail"
-  record "a. lua lint" "$([ "$rc" -eq 0 ] && echo PASS || echo FAIL)" "${detail:-luacheck failed}"
+  if [ "$rc" -eq 0 ]; then
+    detail="$(grep -E '^Total:' "$SCRATCH/a.log" | tail -n1)"
+    [ -n "$detail" ] && echo "    $detail"
+    record "a. lua lint" PASS "${detail:-luacheck passed}"
+  else
+    # Never quote luacheck's own "Total:" line as the detail of a FAILURE: a guard that fired on an
+    # exit-0 run still leaves "Total: 0 warnings / 0 errors" in the log, and that reads like a pass.
+    detail="$(grep -m1 -E '^(FAIL:|luacheck reported problems)' "$SCRATCH/a.log")"
+    record "a. lua lint" FAIL "${detail:-luacheck failed (exit $rc)}"
+  fi
 else
   skip_step "a. lua lint" "a. Lua lint (luacheck)" luacheck "$LUACHECK_INSTALL"
 fi
@@ -139,8 +153,30 @@ step_qml() {
     echo "grammar error; reproduce it directly with: $QMLFORMAT Service.qml"
     return "$rc"
   fi
-  # qmlformat prints the formatted document: no output means it parsed nothing, which is not a pass.
+  # qmlformat prints the formatted document. Empty output, a usage/help dump, or output that does not
+  # look like a QML document means it never parsed Service.qml - which is a FAIL, not a pass.
   [ -s "$log" ] || { echo "FAIL: qmlformat produced no output, so it did not parse Service.qml"; return 1; }
+  if grep -qE '^[[:space:]]*[Uu]sage:' "$log"; then
+    echo "FAIL: qmlformat printed a usage string instead of a formatted document, so it parsed nothing:"
+    head -n 3 "$log" | sed 's/^/    /'
+    return 1
+  fi
+  # A formatted QML document opens with an import statement or the root object ("Item {"), and it is
+  # far larger than any diagnostic; both have to hold before an exit 0 counts as a parse.
+  first_code="$(grep -vE '^[[:space:]]*(//|$)' "$log" | head -n 1)"
+  case "$first_code" in
+    import\ *|[A-Za-z_][A-Za-z0-9_.]*[[:space:]]*\{*) : ;;
+    *)
+      echo "FAIL: qmlformat output does not begin like a QML document, so it did not parse Service.qml"
+      echo "      first line of output: ${first_code:-<no code line>}"
+      return 1
+      ;;
+  esac
+  bytes="$(wc -c <"$log")"
+  if [ "$bytes" -lt 256 ] || ! grep -q '{' "$log"; then
+    echo "FAIL: qmlformat output is $bytes bytes and has no object body, too small to be formatted Service.qml"
+    return 1
+  fi
   return 0
 }
 
@@ -202,12 +238,29 @@ for i in "${!NAMES[@]}"; do
 done
 echo "  steps: $passed passed, $failed failed, $skipped skipped"
 
-if [ "$STRICT" -eq 1 ] && [ "$skipped" -gt 0 ]; then
-  echo "ci-local: FAILED (--strict: $skipped skipped step(s) count as failed; install the missing tools)"
-  exit 1
-fi
-if [ "$ANY_FAIL" -ne 0 ] || [ "$failed" -ne 0 ]; then
-  echo "ci-local: FAILED"
+# One final line whatever went wrong, naming FAILURES FIRST and then skips. Blaming only the skips
+# sends a triager off to install luacheck while a real failure sits in the same run.
+names_by() {
+  local want="$1" out="" i
+  for i in "${!NAMES[@]}"; do
+    [ "${RESULTS[$i]}" = "$want" ] || continue
+    out="${out:+$out, }${NAMES[$i]}"
+  done
+  printf '%s' "$out"
+}
+
+strict_skip=0
+[ "$STRICT" -eq 1 ] && [ "$skipped" -gt 0 ] && strict_skip=1
+
+if [ "$ANY_FAIL" -ne 0 ] || [ "$failed" -ne 0 ] || [ "$strict_skip" -eq 1 ]; then
+  line="ci-local: FAILED ($failed failed, $skipped skipped"
+  [ "$strict_skip" -eq 1 ] && line="$line; --strict: a SKIP counts as a failure"
+  line="$line)"
+  failed_names="$(names_by FAIL)"
+  skipped_names="$(names_by SKIP)"
+  [ -n "$failed_names" ] && line="$line - failed: $failed_names"
+  [ -n "$skipped_names" ] && line="$line - skipped: $skipped_names"
+  echo "$line"
   exit 1
 fi
 if [ "$skipped" -gt 0 ]; then
