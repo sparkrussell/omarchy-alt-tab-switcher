@@ -142,39 +142,80 @@ fi
 
 # --- b. QML parse check ------------------------------------------------------------------------
 # qmlformat 6.x exits non-zero and prints nothing on a grammar error, so say what happened.
+# stdout and stderr are judged separately and only stdout is judged: stdout is the formatted
+# document, stderr carries Qt diagnostics that say nothing about whether the file parsed. An earlier
+# version merged them and required the first non-comment line to look like `import` - which rejected
+# valid QML whose first line is a `pragma` or a `/* */` header, and flipped a clean parse to FAIL on
+# any warning. So this asserts COMPLETENESS instead of first-token shape.
+
 step_qml() {
-  local log="$SCRATCH/b.raw.log"
-  if "$QMLFORMAT" Service.qml >"$log" 2>&1; then
-    cat "$log"
+  local out="$SCRATCH/b.stdout.log" err="$SCRATCH/b.stderr.log"
+  local in_bytes formatted_bytes opens closes tally rc
+  if "$QMLFORMAT" Service.qml >"$out" 2>"$err"; then
+    :
   else
     rc=$?
-    cat "$log"
+    if [ -s "$err" ]; then
+      [ -n "$(tail -c 1 "$err" | tr -d '\n')" ] && echo
+      echo "qmlformat stderr:"
+      head -n 5 "$err" | sed 's/^/    | /'
+      echo
+    fi
     echo "qmlformat could not parse Service.qml (exit $rc). This Qt version prints no diagnostic for a"
     echo "grammar error; reproduce it directly with: $QMLFORMAT Service.qml"
     return "$rc"
   fi
-  # qmlformat prints the formatted document. Empty output, a usage/help dump, or output that does not
-  # look like a QML document means it never parsed Service.qml - which is a FAIL, not a pass.
-  [ -s "$log" ] || { echo "FAIL: qmlformat produced no output, so it did not parse Service.qml"; return 1; }
-  if grep -qE '^[[:space:]]*[Uu]sage:' "$log"; then
-    echo "FAIL: qmlformat printed a usage string instead of a formatted document, so it parsed nothing:"
-    head -n 3 "$log" | sed 's/^/    /'
+  # A diagnostic on stderr is shown but never judged: only stdout says whether the file parsed.
+  if [ -s "$err" ]; then
+    echo "qmlformat wrote to stderr (shown, not treated as a parse failure):"
+    head -n 5 "$err" | sed 's/^/    | /'
+  fi
+  cat "$out"
+  # A document with no final newline would otherwise glue the diagnostics below onto its last line,
+  # hiding a "FAIL: ..." from a ^FAIL: grep.
+  [ -n "$(tail -c 1 "$out" | tr -d '\n')" ] && echo
+  in_bytes="$(wc -c <Service.qml)"
+  [ "$in_bytes" -gt 0 ] || { echo "FAIL: Service.qml is empty, so there was nothing to parse"; return 1; }
+  [ -s "$out" ] || { echo "FAIL: qmlformat exited 0 but printed no document, so it parsed nothing"; return 1; }
+  if [ -z "$(tr -d '[:space:]' <"$out")" ]; then
+    echo "FAIL: qmlformat exited 0 but printed only whitespace, so it parsed nothing"
     return 1
   fi
-  # A formatted QML document opens with an import statement or the root object ("Item {"), and it is
-  # far larger than any diagnostic; both have to hold before an exit 0 counts as a parse.
-  first_code="$(grep -vE '^[[:space:]]*(//|$)' "$log" | head -n 1)"
-  case "$first_code" in
-    import\ *|[A-Za-z_][A-Za-z0-9_.]*[[:space:]]*\{*) : ;;
-    *)
-      echo "FAIL: qmlformat output does not begin like a QML document, so it did not parse Service.qml"
-      echo "      first line of output: ${first_code:-<no code line>}"
-      return 1
-      ;;
-  esac
-  bytes="$(wc -c <"$log")"
-  if [ "$bytes" -lt 256 ] || ! grep -q '{' "$log"; then
-    echo "FAIL: qmlformat output is $bytes bytes and has no object body, too small to be formatted Service.qml"
+  if grep -qE '^[[:space:]]*[Uu]sage:' "$out"; then
+    echo "FAIL: qmlformat printed a usage string instead of a formatted document, so it parsed nothing:"
+    head -n 3 "$out" | sed 's/^/    /'
+    return 1
+  fi
+  # qmlformat reprints the whole document, comments included, and never shrinks it below the input.
+  # Half of Service.qml's own size is therefore the floor, which scales with the file: a small but
+  # genuinely complete document passes, while a stub or a truncated document cannot.
+  formatted_bytes="$(wc -c <"$out")"
+  if [ "$formatted_bytes" -lt $((in_bytes / 2)) ]; then
+    echo "FAIL: qmlformat returned $formatted_bytes bytes for a $in_bytes-byte Service.qml (under half),"
+    echo "      so the document came back truncated rather than formatted"
+    return 1
+  fi
+  # Braces OUTSIDE strings and comments decide nothing else: a `text: "{"` or a `/* } */` header must
+  # not be able to produce a FAIL, which is the class of false FAIL the old first-line guard made.
+  tally="$(awk '
+    { line = $0; n = length(line); i = 1
+      while (i <= n) {
+        c = substr(line, i, 1); two = substr(line, i, 2)
+        if (blk) { if (two == "*/") { blk = 0; i += 2 } else i++; continue }
+        if (str) { if (c == "\\") { i += 2; continue } if (c == "\"") str = 0; i++; continue }
+        if (two == "//") break
+        if (two == "/*") { blk = 1; i += 2; continue }
+        if (c == "\"") { str = 1; i++; continue }
+        if (c == "{") open++
+        if (c == "}") close++
+        i++
+      } }
+    END { printf "%d %d\n", open, close }
+  ' "$out")"
+  opens="${tally% *}"; closes="${tally#* }"
+  if [ "$opens" -ne "$closes" ] || [ "$opens" -eq 0 ]; then
+    echo "FAIL: qmlformat output is not a balanced QML document ($opens '{' vs $closes '}'),"
+    echo "      so it is not the whole formatted Service.qml"
     return 1
   fi
   return 0
@@ -187,7 +228,11 @@ if [ -n "$QMLFORMAT" ]; then
     detail="$("$QMLFORMAT" --version 2>/dev/null || echo qmlformat) parsed Service.qml"
     echo "    $detail"
   else
-    detail="parse error"
+    # Mirror step a: quote the guard's own FAIL: line, and for a genuine parse error the exit line -
+    # either way never a blanket "parse error". An exit 0 that printed a stub fails too, so a failed
+    # run is not necessarily a parse failure.
+    detail="$(grep -m1 -oE 'FAIL:.*|qmlformat could not parse Service\.qml \(exit [0-9]+\)' "$SCRATCH/b.log")"
+    [ -n "$detail" ] || detail="qmlformat could not parse Service.qml (see the output above)"
   fi
   record "b. qml parse" "$([ "$rc" -eq 0 ] && echo PASS || echo FAIL)" "$detail"
 else

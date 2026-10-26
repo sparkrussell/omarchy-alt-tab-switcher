@@ -144,7 +144,7 @@ failed:
 | Step | Check | Needs |
 |---|---|---|
 | a | `luacheck hypr/switcher.lua`, honouring `.luacheckrc` | `luacheck` |
-| b | `qmlformat Service.qml` — grammar parse only; a syntax error exits non-zero | `qmlformat` (Qt 6) |
+| b | `qmlformat Service.qml` — grammar parse only (no module resolution); a syntax error exits non-zero, and an exit 0 that does not return the whole document (empty, a usage dump, truncated) fails too | `qmlformat` (Qt 6) |
 | c | the jq assertions at the core of `omarchy plugin validate` (schemaVersion 1, `id` shape and non-reserved `omarchy.` prefix, `name`/`version`, `kinds == ["service"]`, `entryPoints.service == "Service.qml"`), then that `Service.qml` exists and the plugin folder holds no symlinks | `jq` |
 
 Quickshell's QML modules cannot be installed everywhere, so a full `qmllint` type-check would drown
@@ -164,9 +164,12 @@ lua5.5: .../luacheck/standards.lua:134: attempt to assign to const variable 'fie
 ```
 
 A plain `luarocks install luacheck` is therefore not enough, and a Lua 5.5 build sitting earlier on
-`PATH` is worse than no luacheck at all. Install into a 5.4 tree and link it onto `PATH`:
+`PATH` is worse than no luacheck at all. `luarocks` and the 5.4 interpreter are prerequisites — install
+into a 5.4 tree and link it onto `PATH`:
 
 ```bash
+sudo pacman -S --needed luarocks lua54
+mkdir -p "$HOME/.local/bin"
 luarocks --lua-version=5.4 --tree="$HOME/.luarocks54" install luacheck 1.2.0
 ln -sfn "$HOME/.luarocks54/bin/luacheck" "$HOME/.local/bin/luacheck"
 ```

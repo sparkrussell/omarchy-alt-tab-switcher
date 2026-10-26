@@ -14,9 +14,10 @@
 #
 # The hook passes no flags by default, so a SKIP does not block a push. Set CI_LOCAL_STRICT=1 to make
 # the hook run `scripts/ci-local.sh --strict` - then a missing tool blocks the push too, which is the
-# documented merge rule. The bypass is explicit and loud (git's own --no-verify also skips hooks,
-# silently; do not use it):
+# documented merge rule:
 #   CI_LOCAL_STRICT=1 git push
+#
+# The bypass is explicit and loud (git's own --no-verify also skips hooks, silently; do not use it):
 #   CI_LOCAL_SKIP=1 git push
 #
 # Re-running is a no-op. A different pre-push hook already there is kept as pre-push.bak-<timestamp>.
@@ -72,6 +73,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 
+# CI_LOCAL_STRICT=1 adds --strict so a SKIP blocks the push as well. It compares to "1" exactly, the
+# same rule CI_LOCAL_SKIP follows: keying off "the variable is non-empty" would turn CI_LOCAL_STRICT=0
+# into strict, which nobody asked for. $strict is only ever this one literal or empty.
+strict=
+[ "${CI_LOCAL_STRICT:-}" = "1" ] && strict=--strict
+
 failed=0
 for sha in $(printf '%s' "$pairs" | awk '!seen[$1]++ {print $1}'); do
   refs=$(printf '%s' "$pairs" | awk -v s="$sha" '$1 == s {printf " %s", $2}')
@@ -91,9 +98,7 @@ for sha in $(printf '%s' "$pairs" | awk '!seen[$1]++ {print $1}'); do
     continue
   fi
   # git exports repository variables to hooks; the gate runs its own commands, so do not leak them.
-  # CI_LOCAL_STRICT=1 adds --strict so a SKIP blocks the push as well. The expansion yields either
-  # exactly "--strict" or nothing, so the variable's value is never word-split into the command.
-  if ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR; cd "$wt" && bash scripts/ci-local.sh ${CI_LOCAL_STRICT:+--strict} </dev/null >&2 ); then
+  if ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR; cd "$wt" && bash scripts/ci-local.sh $strict </dev/null >&2 ); then
     :
   else
     echo "pre-push: the local CI gate FAILED on commit $short." >&2
