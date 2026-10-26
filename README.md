@@ -126,6 +126,102 @@ omarchy plugin remove io.github.sparkrussell.alt-tab-switcher
 Then delete the Alt-Tab block from `~/.config/hypr/hyprland.lua` and run
 `hyprctl reload`. Omarchy's stock `ALT+TAB` bindings come back on reload.
 
+## CI is the local gate
+
+`scripts/ci-local.sh` is the authoritative gate for this repo — it is what decides whether a change is
+good. `.github/workflows/ci.yml` is retained only as the record of what the gate mirrors: it no longer
+triggers on push or on pull request (it is `workflow_dispatch` only), so a check there says nothing
+about a commit.
+
+```bash
+bash scripts/ci-local.sh            # run the gate
+bash scripts/ci-local.sh --strict   # merge gate: a SKIP counts as a failure
+```
+
+All three checks always run, each keeps its own log, and the command exits non-zero if any of them
+failed:
+
+| Step | Check | Needs |
+|---|---|---|
+| a | `luacheck hypr/switcher.lua`, honouring `.luacheckrc` | `luacheck` |
+| b | `qmlformat Service.qml` — grammar parse only (no module resolution); a syntax error exits non-zero, and an exit 0 that does not return the whole document (empty, whitespace-only, truncated) fails too | `qmlformat` (Qt 6) |
+| c | the jq assertions at the core of `omarchy plugin validate` (schemaVersion 1, `id` shape and non-reserved `omarchy.` prefix, `name`/`version`, `kinds == ["service"]`, `entryPoints.service == "Service.qml"`), then that `Service.qml` exists and the plugin folder holds no symlinks | `jq` |
+
+Quickshell's QML modules cannot be installed everywhere, so a full `qmllint` type-check would drown
+in unresolved-import noise; `qmlformat` parses the grammar without module resolution, which is the
+regression worth catching.
+
+**A missing tool is a SKIP, never a silent pass.** The step says which tool is missing and prints the
+exact install command, and the run warns that the gate is degraded.
+
+#### Installing the tools
+
+`luacheck` must be built against **Lua 5.4**. On Arch, `luarocks` defaults to Lua 5.5, and a luacheck
+installed that way resolves its modules from a `5.5` tree and dies on the first require:
+
+```
+lua5.5: .../luacheck/standards.lua:134: attempt to assign to const variable 'field_name'
+```
+
+A plain `luarocks install luacheck` is therefore not enough, and a Lua 5.5 build sitting earlier on
+`PATH` is worse than no luacheck at all. `luarocks` and the 5.4 interpreter are prerequisites — install
+into a 5.4 tree and link it onto `PATH`:
+
+```bash
+sudo pacman -S --needed luarocks lua54
+mkdir -p "$HOME/.local/bin"
+luarocks --lua-version=5.4 --tree="$HOME/.luarocks54" install luacheck 1.2.0
+ln -sfn "$HOME/.luarocks54/bin/luacheck" "$HOME/.local/bin/luacheck"
+```
+
+`~/.local/bin` must be on `PATH`. Confirm the build before trusting the gate — `luacheck --version`
+has to report both lines:
+
+```
+Luacheck: 1.2.0
+Lua: PUC-Rio Lua 5.4
+```
+
+`qmlformat` comes from Qt 6:
+
+```bash
+sudo pacman -S --needed qt6-declarative     # provides /usr/lib/qt6/bin/qmlformat
+```
+
+The gate falls back to `/usr/lib/qt6/bin/qmlformat` when it is not on `PATH`.
+
+`jq` is required for step c: without it the manifest check fails loudly rather than skipping
+(`sudo pacman -S --needed jq`).
+
+### Install the pre-push hook (opt-in)
+
+```bash
+bash scripts/install-git-hooks.sh              # install
+bash scripts/install-git-hooks.sh --uninstall  # remove
+```
+
+The hook checks out each distinct pushed commit into a temporary detached worktree and runs that
+tree's `scripts/ci-local.sh`, blocking the push on failure. It ignores tag pushes and branch
+deletions. Re-running the installer is a no-op; a pre-existing foreign `pre-push` hook is kept as
+`pre-push.bak-<timestamp>`.
+
+By default the hook runs the gate **without** `--strict`, so a SKIP does not block a push. Push with
+`CI_LOCAL_STRICT=1` to make the hook enforce the merge rule — a missing tool then blocks the push:
+
+```bash
+CI_LOCAL_STRICT=1 git push     # SKIP counts as a failure, same as --strict
+```
+
+The bypass is explicit and loud: `CI_LOCAL_SKIP=1 git push` (git's own `--no-verify` also skips
+hooks, silently — don't).
+
+### Merge rule
+
+A PR merges only when `bash scripts/ci-local.sh --strict` exits 0 — `3 passed, 0 failed, 0 skipped`.
+Without `--strict` a SKIP is not a failure, so a degraded run is not a merge signal — it means the
+gate has not looked at that step yet. The pre-push hook does not enforce this unless you push with
+`CI_LOCAL_STRICT=1`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Contributions and forks welcome.
