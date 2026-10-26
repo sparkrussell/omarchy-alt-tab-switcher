@@ -209,15 +209,14 @@ step_qml() {
     REASON="qmlformat exited 0 but printed only whitespace"
     return 1
   fi
-  if grep -qE '^[[:space:]]*[Uu]sage:' "$out"; then
-    echo "FAIL: qmlformat printed a usage string instead of a formatted document, so it parsed nothing:"
-    head -n 3 "$out" | sed 's/^/    /'
-    REASON="qmlformat printed a usage string, not a document"
-    return 1
-  fi
   # The completeness oracle. A stub, a silently truncated write, or any other exit-0 that returns
   # part of the document fails here, whatever the document happens to contain: qmlformat cannot parse
-  # an incomplete document. This is why no brace/string/comment counting is needed anywhere.
+  # an incomplete document. This is why no brace/string/comment counting is needed anywhere, and why
+  # there is no text heuristic over the document either: a real qmlformat usage dump goes to stderr
+  # with empty stdout (caught above as "printed no document"), and anything else that is not a
+  # formatted document does not re-parse here. Grepping the output for "^Usage:" was the last
+  # hand-rolled guess at what the text means, and it rejected a valid Service.qml carrying a comment
+  # block that happened to start a line with "Usage:".
   if ! "$QMLFORMAT" "$out" >/dev/null 2>&1; then
     echo "FAIL: qmlformat's own output does not parse as a complete QML document, so what came back"
     echo "      is not the whole formatted Service.qml (truncated?)"
