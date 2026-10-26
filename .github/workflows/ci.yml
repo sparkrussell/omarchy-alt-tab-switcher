@@ -1,3 +1,6 @@
+# DISABLED at the repository level: GitHub Actions does not run this workflow, and a red or missing
+# check here means nothing. scripts/ci-local.sh is the authoritative gate; this file is kept only as
+# the record of what that script mirrors. Run `bash scripts/ci-local.sh --strict` before merging.
 name: CI
 
 # Static-only gates. Everything this project does at runtime needs a live

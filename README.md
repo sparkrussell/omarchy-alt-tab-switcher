@@ -126,6 +126,59 @@ omarchy plugin remove io.github.sparkrussell.alt-tab-switcher
 Then delete the Alt-Tab block from `~/.config/hypr/hyprland.lua` and run
 `hyprctl reload`. Omarchy's stock `ALT+TAB` bindings come back on reload.
 
+## CI is the local gate
+
+GitHub Actions is **disabled at the repository level** for this repo. `.github/workflows/ci.yml` is
+kept only as the record of what used to run — a red or missing check there means nothing. The
+authoritative gate is `scripts/ci-local.sh`:
+
+```bash
+bash scripts/ci-local.sh            # run the gate
+bash scripts/ci-local.sh --strict   # merge gate: a SKIP counts as a failure
+```
+
+All three checks always run, each keeps its own log, and the command exits non-zero if any of them
+failed:
+
+| Step | Check | Needs |
+|---|---|---|
+| a | `luacheck hypr/switcher.lua`, honouring `.luacheckrc` | `luacheck` |
+| b | `qmlformat Service.qml` — grammar parse only; a syntax error exits non-zero | `qmlformat` (Qt 6) |
+| c | the jq assertions at the core of `omarchy plugin validate` (schemaVersion 1, `id` shape and non-reserved `omarchy.` prefix, `name`/`version`, `kinds == ["service"]`, `entryPoints.service == "Service.qml"`), then that `Service.qml` exists and the plugin folder holds no symlinks | `jq` |
+
+Quickshell's QML modules cannot be installed everywhere, so a full `qmllint` type-check would drown
+in unresolved-import noise; `qmlformat` parses the grammar without module resolution, which is the
+regression worth catching.
+
+**A missing tool is a SKIP, never a silent pass.** The step says which tool is missing and prints the
+exact install command, and the run warns that the gate is degraded. On Arch:
+
+```bash
+sudo pacman -S --needed lua luarocks && sudo luarocks install luacheck 1.2.0
+sudo pacman -S --needed qt6-declarative     # provides /usr/lib/qt6/bin/qmlformat
+```
+
+`jq` is required for step c: without it the manifest check fails loudly rather than skipping.
+
+### Install the pre-push hook (opt-in)
+
+```bash
+bash scripts/install-git-hooks.sh              # install
+bash scripts/install-git-hooks.sh --uninstall  # remove
+```
+
+The hook checks out each distinct pushed commit into a temporary detached worktree and runs that
+tree's `scripts/ci-local.sh`, blocking the push on failure. It ignores tag pushes and branch
+deletions. Re-running the installer is a no-op; a pre-existing foreign `pre-push` hook is kept as
+`pre-push.bak-<timestamp>`. The only bypass is explicit and loud:
+`CI_LOCAL_SKIP=1 git push` (git's own `--no-verify` also skips hooks, silently — don't).
+
+### Merge rule
+
+A PR merges only when `bash scripts/ci-local.sh --strict` exits 0 on a machine with `jq`,
+`luacheck` and `qmlformat` installed. Without `--strict` a SKIP is not a failure, so a degraded run
+is not a merge signal — it means the gate has not looked at that step yet.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Contributions and forks welcome.
